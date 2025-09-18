@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dot Jumper — Speedrun Style</title>
+  <style>
+    body{margin:0;background:#000;color:#fff;font-family:ui-monospace,monospace;text-align:center}
+    canvas{background:#000;display:block;margin:10px auto;border:2px solid #222}
+    #hud{margin-top:6px;font-size:14px}
+    #tmr{position:absolute;top:10px;left:10px;font-size:26px;font-weight:bold;color:#fff}
+    #end{display:none;margin-top:12px}
+    #leader{margin-top:12px}
+    input,button{background:#161616;border:1px solid #333;color:#fff;border-radius:6px;padding:8px 10px}
+    button{cursor:pointer}
+  </style>
+</head>
+<body>
+  <h1>DOT JUMPER</h1>
+  <canvas id="cv" width="640" height="400"></canvas>
+  <div id="tmr">Time: 0.0s</div>
+  <div id="hud">
+    <span id="lvl">Level 1/10</span> | <span id="dotc">Dots: 0</span>
+  </div>
+  <div id="end">
+    <h2 id="final"></h2>
+    <div>
+      <input id="name" placeholder="Your name" maxlength="18"/>
+      <button id="submit">Submit</button>
+    </div>
+    <div id="leader"></div>
+    <button id="again" style="margin-top:16px">Play Again</button>
+  </div>
+  <script>
+    const cv=document.getElementById('cv');
+    const ctx=cv.getContext('2d');
+    const lvlEl=document.getElementById('lvl');
+    const tmrEl=document.getElementById('tmr');
+    const dotEl=document.getElementById('dotc');
+    const endEl=document.getElementById('end');
+    const finalEl=document.getElementById('final');
+    const nameEl=document.getElementById('name');
+    const submitBtn=document.getElementById('submit');
+    const againBtn=document.getElementById('again');
+    const boardEl=document.getElementById('leader');
+
+    // ===== Input
+    const keys={}, prevKeys={};
+    addEventListener('keydown',e=>{keys[e.code]=true;});
+    addEventListener('keyup',e=>{keys[e.code]=false;});
+    const justPressed=code=>keys[code]&&!prevKeys[code];
+
+    // ===== Utils
+    const AABB=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+    // ===== Player
+    const G=0.5,SPEED=3,JUMP=-10;
+    const spawn={x:40,y:300};
+    const player={x:spawn.x,y:spawn.y,w:20,h:20,dx:0,dy:0,onGround:false,jumpsLeft:2};
+
+    // ===== Game state
+    let level=1,running=false,runStarted=false,levelStarted=false;
+    let startTime=0,totalTime=0,turretDelayStart=0;
+
+    // Content containers
+    let platforms=[],dots=[],turrets=[],lasers=[],projectiles=[],flag=null,spikes=[];
+
+    // Background colors per level
+    const BG=["#000000","#0b3cff","#ff2b2b","#12d46b","#ffe21a","#ff2bf2","#10e7f0","#ff7a1a","#8a2bff","#25ff9c"];
+
+    // Dot contrasting colors against backgrounds
+    const DOTC=["#00ffff","#ffff00","#00ff00","#ff00ff","#000000","#00ffff","#ffff00","#00ff00","#ff00ff","#000000"];
+
+    // ===== Level Builder
+    function buildLevel(n){
+      platforms=[];dots=[];turrets=[];lasers=[];projectiles=[];flag=null;spikes=[];
+      platforms.push({x:0,y:380,w:cv.width,h:20});
+      const addDots=arr=>arr.forEach(p=>dots.push({x:p[0],y:p[1],w:6,h:6}));
+      const addSpikes=arr=>arr.forEach(p=>spikes.push({x:p[0],y:p[1],w:p[2],h:p[3]}));
+
+      switch(n){
+        case 1:
+          platforms.push({x:220,y:320,w:120,h:12});
+          addDots([[150,360],[260,280],[470,230]]);
+          addSpikes([[320,360,40,20]]);
+          break;
+        case 2:
+          platforms.push({x:260,y:320,w:140,h:12});
+          addDots([[120,350],[300,280],[520,300]]);
+          addSpikes([[420,360,40,20]]);
+          turrets.push(makeTurret(540,360,'predictive',2200));
+          break;
+        case 3:
+          platforms.push({x:160,y:320,w:120,h:12},{x:380,y:280,w:120,h:12});
+          addDots([[190,290],[410,240],[520,310]]);
+          addSpikes([[320,360,40,20],[500,360,40,20]]);
+          turrets.push(makeTurret(40,360,'predictive',1800));
+          turrets.push(makeTurret(600,360,'predictive',2000));
+          break;
+        case 4:
+          platforms.push({x:280,y:320,w:120,h:12});
+          addDots([[300,280],[520,310]]);
+          lasers.push(makeLaser(320,120,6,260,1600,1600));
+          addSpikes([[200,360,40,20],[420,360,40,20]]);
+          break;
+        case 5:
+          platforms.push({x:140,y:320,w:120,h:12},{x:380,y:320,w:120,h:12});
+          addDots([[180,290],[420,290],[560,310]]);
+          addSpikes([[260,360,60,20]]);
+          turrets.push(makeTurret(260,360,'predictive',1400,{min:160,max:440,speed:2}));
+          break;
+        case 6:
+          platforms.push({x:220,y:320,w:120,h:12});
+          addDots([[240,280],[520,310]]);
+          addSpikes([[360,360,60,20]]);
+          turrets.push(makeTurret(560,360,'homing',3200));
+          break;
+        case 7:
+          platforms.push({x:140,y:320,w:120,h:12},{x:420,y:270,w:120,h:12});
+          addDots([[170,290],[450,230],[560,310]]);
+          lasers.push(makeLaser(240,120,6,260,1500,1500));
+          addSpikes([[320,360,60,20]]);
+          turrets.push(makeTurret(60,360,'predictive',1600));
+          turrets.push(makeTurret(540,360,'homing',3800));
+          break;
+        case 8:
+          platforms.push({x:100,y:320,w:120,h:12},{x:300,y:280,w:120,h:12},{x:500,y:320,w:120,h:12});
+          addDots([[130,290],[330,250],[530,280]]);
+          addSpikes([[240,360,60,20],[420,360,60,20]]);
+          turrets.push(makeTurret(60,360,'predictive',1400));
+          turrets.push(makeTurret(320,360,'predictive',2100));
+          turrets.push(makeTurret(580,360,'predictive',2600));
+          break;
+        case 9:
+          platforms.push({x:220,y:320,w:120,h:12},{x:420,y:260,w:120,h:12});
+          addDots([[240,280],[440,220],[560,310]]);
+          lasers.push(makeLaser(310,120,6,260,1500,1200));
+          addSpikes([[160,360,60,20],[500,360,60,20]]);
+          turrets.push(makeTurret(80,360,'homing',3600));
+          turrets.push(makeTurret(560,360,'homing',3400));
+          break;
+        case 10:
+          platforms.push({x:160,y:320,w:120,h:12},{x:360,y:280,w:120,h:12},{x:520,y:230,w:100,h:12});
+          addDots([[180,290],[380,250],[540,190]]);
+          lasers.push(makeLaser(260,120,6,260,1600,1000));
+          addSpikes([[300,360,60,20],[460,360,60,20]]);
+          turrets.push(makeTurret(60,360,'predictive',1300));
+          turrets.push(makeTurret(300,360,'homing',3000));
+          flag={x:600,y:280,w:4,h:90};
+          break;
+      }
+
+      levelStarted=false;
+      turretDelayStart=0;
+
+      respawn();
+      lvlEl.textContent=`Level ${n}/10`;
+      dotEl.textContent=`Dots: ${dots.length}`;
+    }
+
+    function makeTurret(x,y,type,cool,move){
+      return {x,y,w:20,h:20,type,cool,last:0,move:move?{...move,dir:1}:null,startX:x,startY:y};
+    }
+
+    function makeLaser(x,y,w,h,onTime,offTime){
+      return {x,y,w,h,on:false,t:0,onTime,offTime};
+    }
+
+    function respawn(){
+      player.x=spawn.x;
+      player.y=spawn.y;
+      player.dx=0;
+      player.dy=0;
+      player.onGround=false;
+      player.jumpsLeft=2;
+      projectiles=[];
+      lasers.forEach(l=>{l.on=false;l.t=0;});
+      turrets.forEach(t=>{t.last=0;t.x=t.startX;t.y=t.startY;if(t.move) t.move.dir=1;});
+    }
+
+    // ===== Drawing
+    function drawBG(){ctx.fillStyle=BG[level-1]||'#000';ctx.fillRect(0,0,cv.width,cv.height)}
+    function drawLasers(){lasers.forEach(l=>{ctx.fillStyle=l.on?'#ff3030':'rgba(255,48,48,0.25)';ctx.fillRect(l.x,l.y,l.w,l.h)})}
+    function drawPlatforms(){ctx.fillStyle='#fff';platforms.forEach(p=>ctx.fillRect(p.x,p.y,p.w,p.h))}
+    function drawSpikes(){ctx.fillStyle='#fff';spikes.forEach(s=>{ctx.beginPath();ctx.moveTo(s.x,s.y+s.h);ctx.lineTo(s.x+s.w/2,s.y);ctx.lineTo(s.x+s.w,s.y+s.h);ctx.closePath();ctx.fill();})}
+    function drawDots(){ctx.fillStyle=DOTC[level-1]||'#00ffcc';dots.forEach(d=>ctx.fillRect(d.x,d.y,d.w,d.h))}
+    function drawTurrets(){turrets.forEach(t=>{ctx.fillStyle=t.type==='homing'?'#ff3b3b':'#fff';ctx.fillRect(t.x,t.y,t.w,t.h)})}
+    function drawProjectiles(){projectiles.forEach(p=>{ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill()})}
+    function drawFlag(){if(!flag)return;ctx.fillStyle='#fff';ctx.fillRect(flag.x,flag.y,flag.w,flag.h);ctx.fillStyle='#ff4040';ctx.beginPath();ctx.moveTo(flag.x+flag.w,flag.y);ctx.lineTo(flag.x+flag.w+28,flag.y+14);ctx.lineTo(flag.x+flag.w,flag.y+28);ctx.closePath();ctx.fill()}
+    function drawPlayer(){ctx.fillStyle='#fff';ctx.fillRect(player.x,player.y,player.w,player.h);ctx.strokeStyle='#000';ctx.strokeRect(player.x,player.y,player.w,player.h)}
+
+    // ===== Turrets
+    function tryFireTurrets(now){
+      if(!levelStarted) return;
+      if(now - turretDelayStart < 1000) return;
+      turrets.forEach(t=>{
+        if(t.move){
+          t.x += t.move.speed * t.move.dir;
+          if(t.x <= t.move.min){ t.x = t.move.min; t.move.dir = 1; }
+          if(t.x >= t.move.max){ t.x = t.move.max; t.move.dir = -1; }
+        }
+        if(now-(t.last||0) < t.cool) return;
+        t.last = now;
+        const cx=t.x+t.w/2, cy=t.y+t.h/2;
+        if(t.type==='predictive'){
+          const tx=player.x+player.w/2, ty=player.y+player.h/2;
+          const dx=tx-cx, dy=ty-cy, m=Math.hypot(dx,dy)||1;
+          projectiles.push({x:cx,y:cy,vx:dx/m*3.2,vy:dy/m*3.2,color:'#fff',homing:false});
+        } else if(t.type==='homing'){
+          projectiles.push({x:cx,y:cy,vx:0,vy:0,color:'#ff3b3b',homing:true});
+        }
+      });
+    }
+
+    // ===== Death & Finish
+    function death(){
+      respawn();
+      levelStarted=false;
+      turretDelayStart=0;
+    }
+
+    function finish(){
+      running=false;
+      totalTime=(performance.now()-startTime)/1000;
+      tmrEl.textContent=`Time: ${totalTime.toFixed(2)}s`;
+      finalEl.textContent=`Finished in ${totalTime.toFixed(2)}s`;
+      renderLeaderboard();
+      endEl.style.display='block';
+    }
+
+    function loadScores(){
+      try{ return JSON.parse(localStorage.getItem('dotJumperScores')||'[]'); }
+      catch(e){ return []; }
+    }
+
+    function saveScores(scores){
+      localStorage.setItem('dotJumperScores',JSON.stringify(scores));
+    }
+
+    function renderLeaderboard(){
+      const scores=loadScores();
+      if(!scores.length){
+        boardEl.innerHTML='<p>No runs submitted yet.</p>';
+        return;
+      }
+      const entries=[...scores].sort((a,b)=>a.time-b.time).slice(0,5)
+        .map((s,i)=>`<div>${i+1}. ${s.name || 'Anon'} — ${s.time.toFixed(2)}s</div>`)
+        .join('');
+      boardEl.innerHTML=entries;
+    }
+
+    submitBtn.addEventListener('click',()=>{
+      if(endEl.style.display==='none') return;
+      const name=nameEl.value.trim()||'Anon';
+      const scores=loadScores();
+      scores.push({name,time:totalTime});
+      const top=[...scores].sort((a,b)=>a.time-b.time).slice(0,5);
+      saveScores(top);
+      nameEl.value='';
+      renderLeaderboard();
+    });
+
+    againBtn.addEventListener('click',()=>{
+      endEl.style.display='none';
+      nameEl.value='';
+      start();
+    });
+
+    nameEl.addEventListener('keydown',e=>{if(e.key==='Enter') submitBtn.click();});
+
+    // ===== Main Loop
+    let lastTS=performance.now();
+    function update(ts){
+      if(!running) return;
+      const dt=Math.min(40, ts-lastTS);
+      lastTS=ts;
+
+      const anyMove = keys['ArrowLeft']||keys['ArrowRight']||keys['Space']||keys['ArrowUp'];
+      if(!runStarted && anyMove){ runStarted=true; startTime=ts; }
+      if(!levelStarted && anyMove){ levelStarted=true; turretDelayStart=ts; }
+
+      player.dx=0;
+      if(keys['ArrowLeft']) player.dx=-SPEED;
+      if(keys['ArrowRight']) player.dx=SPEED;
+      const wantsJump=justPressed('Space')||justPressed('ArrowUp');
+      if(wantsJump && player.jumpsLeft>0){ player.dy=JUMP; player.jumpsLeft--; }
+
+      player.dy += G;
+      player.dy = Math.min(player.dy,12);
+      player.x += player.dx;
+      player.x = clamp(player.x,0,cv.width-player.w);
+      player.y += player.dy;
+      player.onGround=false;
+
+      for(const p of platforms){
+        if(AABB(player,p)){
+          if(player.dy>0){
+            player.y=p.y-player.h;
+            player.dy=0;
+            player.onGround=true;
+            player.jumpsLeft=2;
+          }else if(player.dy<0){
+            player.y=p.y+p.h;
+            player.dy=0;
+          }
+        }
+      }
+
+      if(player.y+player.h>cv.height){
+        player.y=cv.height-player.h;
+        player.dy=0;
+        player.onGround=true;
+        player.jumpsLeft=2;
+      }
+      if(player.y<0){ player.y=0; player.dy=0; }
+
+      lasers.forEach(l=>{
+        l.t+=dt;
+        if(!l.on && l.t>=l.offTime){ l.on=true; l.t=0; }
+        else if(l.on && l.t>=l.onTime){ l.on=false; l.t=0; }
+      });
+
+      tryFireTurrets(ts);
+
+      let died=false;
+      const next=[];
+      for(const pr of projectiles){
+        if(pr.homing){
+          const tx=player.x+player.w/2, ty=player.y+player.h/2;
+          const dx=tx-pr.x, dy=ty-pr.y;
+          const m=Math.hypot(dx,dy)||1;
+          const sp=2.2;
+          pr.vx=dx/m*sp;
+          pr.vy=dy/m*sp;
+        }
+        pr.x+=pr.vx;
+        pr.y+=pr.vy;
+        if(pr.x<-10||pr.x>cv.width+10||pr.y<-10||pr.y>cv.height+10) continue;
+        let hit=false;
+        for(const p of platforms){
+          if(pr.x+5>p.x&&pr.x-5<p.x+p.w&&pr.y+5>p.y&&pr.y-5<p.y+p.h){ hit=true; break; }
+        }
+        if(hit) continue;
+        for(const l of lasers){
+          if(l.on && pr.x+5>l.x && pr.x-5<l.x+l.w && pr.y+5>l.y && pr.y-5<l.y+l.h){ hit=true; break; }
+        }
+        if(hit) continue;
+        if(pr.x+5>player.x && pr.x-5<player.x+player.w && pr.y+5>player.y && pr.y-5<player.y+player.h){ died=true; continue; }
+        next.push(pr);
+      }
+      projectiles = next;
+
+      if(!died){
+        for(const l of lasers){ if(l.on && AABB(player,l)){ died=true; break; } }
+      }
+      if(!died){
+        for(const s of spikes){
+          const px=player.x+player.w/2;
+          const py=player.y+player.h;
+          if(px<s.x || px>s.x+s.w) continue;
+          if(py<s.y) continue;
+          const mid=s.x+s.w/2;
+          let yTop;
+          if(px<=mid){
+            const ratio=(px-s.x)/(mid-s.x||1);
+            yTop=s.y+(1-Math.min(Math.max(ratio,0),1))*s.h;
+          } else {
+            const ratio=(px-mid)/((s.x+s.w)-mid||1);
+            yTop=s.y+Math.min(Math.max(ratio,0),1)*s.h;
+          }
+          if(py>=yTop){ died=true; break; }
+        }
+      }
+
+      if(died){
+        death();
+        drawFrame();
+        syncPrevKeys();
+        if(running) requestAnimationFrame(update);
+        return;
+      }
+
+      const before=dots.length;
+      dots=dots.filter(d=>!(AABB(player,d)));
+      if(dots.length!==before){ dotEl.textContent=`Dots: ${dots.length}`; }
+
+      if(dots.length===0){
+        if(level===10){
+          if(flag && AABB(player,{x:flag.x,y:flag.y,w:flag.w+28,h:flag.h})){
+            finish();
+            drawFrame();
+            return;
+          }
+        } else {
+          level++;
+          buildLevel(level);
+        }
+      }
+
+      if(runStarted){
+        totalTime=(ts-startTime)/1000;
+        tmrEl.textContent=`Time: ${totalTime.toFixed(1)}s`;
+      }
+
+      drawFrame();
+      syncPrevKeys();
+      if(running) requestAnimationFrame(update);
+    }
+
+    function drawFrame(){
+      drawBG();
+      drawLasers();
+      drawPlatforms();
+      drawSpikes();
+      drawDots();
+      drawTurrets();
+      drawProjectiles();
+      drawFlag();
+      drawPlayer();
+    }
+
+    function syncPrevKeys(){
+      for(const k in keys){ prevKeys[k]=keys[k]; }
+      prevKeys['Space']=keys['Space']||false;
+      prevKeys['ArrowUp']=keys['ArrowUp']||false;
+    }
+
+    function start(){
+      level=1;
+      runStarted=false;
+      running=true;
+      totalTime=0;
+      tmrEl.textContent='Time: 0.0s';
+      buildLevel(level);
+      renderLeaderboard();
+      lastTS=performance.now();
+      requestAnimationFrame(update);
+    }
+
+    renderLeaderboard();
+    start();
+  </script>
+</body>
+</html>
